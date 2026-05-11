@@ -1,0 +1,11 @@
+.git
+.gitignore
+.github
+.next
+node_modules
+README.md
+Dockerfile
+.dockerignore
+*.tfvars
+*.tfstate
+.terraform
