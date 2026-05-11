@@ -4,6 +4,21 @@ A production-ready Next.js application deployed on **AWS ECS Fargate** with full
 
 ---
 
+## Screenshots
+
+Evidence screenshots are in the [`screenshots/`](screenshots/) folder:
+
+| File | What it shows |
+|---|---|
+| [`shared-terraform-run.png`](screenshots/shared-terraform-run.png) | `terraform apply` for the shared networking layer |
+| [`platform-terraform-run.png`](screenshots/platform-terraform-run.png) | `terraform apply` for the platform layer (ECR, IAM, ECS cluster, ALB) |
+| [`web-app-terraform-run.png`](screenshots/web-app-terraform-run.png) | `terraform apply` for the web-app service layer |
+| [`Pipeline-run.png`](screenshots/Pipeline-run.png) | GitHub Actions pipeline run (GitGuardian scan → build & deploy) |
+| [`Application-running.png`](screenshots/Application-running.png) | ECS service showing running tasks |
+| [`Application-Up.png`](screenshots/Application-Up.png) | Live application accessible via the ALB DNS name |
+
+---
+
 ## Architecture Overview
 
 ```
@@ -57,12 +72,14 @@ Each layer reads the previous layer's outputs via `terraform_remote_state` (loca
 git push → main
       │
       ▼
-GitHub Actions
-      ├── test:   npm ci → lint → npm test
-      └── deploy: (needs: test)
+GitHub Actions  (.github/workflows/main.yml)
+      ├── git-guardian-scan:  secrets scan across full commit history
+      └── deploy: (needs: git-guardian-scan)
               ├── Configure AWS credentials
               ├── Login to ECR
-              ├── Build Docker image (multi-stage + GHA layer cache)
+              ├── Set up Docker Buildx (GHA layer cache)
+              ├── Generate image tag  web-app-<7-char commit hash>
+              ├── Build Docker image (multi-stage: deps → builder → runner)
               ├── Push  web-app-<commit>  +  web-app-latest-dev  tags
               ├── Render new ECS task definition revision
               ├── Deploy to ECS Fargate (waits for stability)
@@ -75,15 +92,25 @@ GitHub Actions
 ## Repository Structure
 
 ```
-Damolak/
-├── README.md
+Damolak-Assessment/
+│
+├── .github/
+│   └── workflows/
+│       └── main.yml                   # GitHub Actions pipeline
+│
+├── screenshots/                       # Evidence screenshots (see Screenshots section above)
+│   ├── shared-terraform-run.png
+│   ├── platform-terraform-run.png
+│   ├── web-app-terraform-run.png
+│   ├── Pipeline-run.png
+│   ├── Application-running.png
+│   └── Application-Up.png
 │
 ├── app/                               # Next.js 15 application
 │   ├── .aws/
 │   │   └── task-def.json              # ECS task definition skeleton (used by CI/CD)
-│   ├── .github/
-│   │   └── workflows/
-│   │       └── deploy.yml             # GitHub Actions pipeline
+│   ├── public/
+│   │   └── .gitkeep                   # Preserves empty dir for Docker COPY
 │   ├── src/app/
 │   │   ├── api/health/route.ts        # GET /api/health → { status, timestamp }
 │   │   ├── page.tsx                   # Homepage (reads API_BASE_URL from env)
@@ -93,6 +120,7 @@ Damolak/
 │   ├── .dockerignore
 │   ├── next.config.ts                 # output: "standalone"
 │   ├── package.json
+│   ├── package-lock.json
 │   └── tsconfig.json
 │
 └── infra/
@@ -100,8 +128,7 @@ Damolak/
     │   ├── providers.tf
     │   ├── variables.tf
     │   ├── main.tf                    # VPC, subnets, IGW, NAT, route tables
-    │   ├── outputs.tf
-    │   └── terraform.tfvars
+    │   └── outputs.tf
     │
     ├── platform/                      # Layer 2 — Platform services
     │   ├── providers.tf
@@ -111,8 +138,7 @@ Damolak/
     │   ├── iam.tf                     # ECS execution role + task role
     │   ├── ecs-cluster.tf             # ECS cluster (Fargate + Fargate Spot)
     │   ├── alb.tf                     # ALB, security group, HTTP listener
-    │   ├── outputs.tf
-    │   └── terraform.tfvars
+    │   └── outputs.tf
     │
     └── web-app/                       # Layer 3 — Service resources
         ├── providers.tf
@@ -125,9 +151,7 @@ Damolak/
         ├── secrets.tf                 # Secrets Manager (API_BASE_URL only)
         ├── security-groups.tf
         ├── cloudwatch.tf
-        ├── outputs.tf
-        ├── values-dev.tfvars
-        └── values-prod.tfvars
+        └── outputs.tf
 ```
 
 ---
@@ -172,7 +196,6 @@ This creates the ECR repository, IAM roles, ECS cluster, and ALB. Note the ALB D
 ```bash
 cd infra/web-app
 terraform init
-terraform init
 terraform fmt
 terraform validate
 terraform plan -out=devplan.tfplan -var-file=values-dev.tfvars
@@ -206,7 +229,15 @@ docker push ACCOUNT_ID.dkr.ecr.eu-west-1.amazonaws.com/web-app-ecr:web-app-lates
 
 ### 6. Configure GitHub Actions secrets
 
-In **GitHub → Settings → Environments → development → Secrets**:
+The pipeline uses two scopes of secrets.
+
+**Repository secret** (GitHub → Settings → Secrets → Actions):
+
+| Secret | Value |
+|---|---|
+| `GITGUARDIAN_API_KEY` | GitGuardian service account API key |
+
+**Environment secrets** (GitHub → Settings → Environments → development → Secrets):
 
 | Secret | Value |
 |---|---|
